@@ -1,0 +1,213 @@
+<?php
+/**
+ * Implementation of hook_theme
+ */
+function custom_mailchimp_theme($existing, $type, $theme, $path) {
+  return array(
+    'custom_mailchimp_newsletter' => array(
+      'template' => 'custom_mailchimp_newsletter',
+      'variables' => array('vars' => null),
+    ),
+  );
+}
+
+/**
+ * Implementation of hook_menu
+ */
+function custom_mailchimp_menu() {
+  $items['mailchimp_prepare'] = array(
+    'page callback' => 'custom_mailchimp_prepare',
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+   $items['admin/config/system/mail_texts'] = array(
+    'title' => 'Edit newsletter texts',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('custom_mailchimp_texts'),
+	  'access arguments' => array('administer site configuration'),
+	  'type' => MENU_NORMAL_ITEM,
+	);
+  
+  return $items;
+}
+
+/**
+ * Get data array to newsletter
+ */
+function custom_mailchimp_get_newsletter_data($edit = NULL) {
+  $data = array();   
+  $data['site_url'] = url('<front>', array('absolute' => TRUE)); 
+  $defaults = array(
+    'value' => '',
+    'format' => filter_default_format(),
+  ); 
+  $bfield = variable_get('newsletter_body', $defaults); 
+  $data['body'] = $bfield['value']; 
+  $ffield = variable_get('newsletter_footer', $defaults);
+  $data['footer'] = $ffield['value'];
+  if ($edit) {
+    $data['body'] .= '<div style="margin-top: -20px; margin-bottom: 20px;">' . l(t('Edit texts'), 'admin/config/system/mail_texts') . '</div>';
+    $data['footer'] .= '<div style="margin-top: -20px; margin-bottom: 20px;">' . l(t('Edit texts'), 'admin/config/system/mail_texts') . '</div>'; 
+  }  
+  //we can use here views_embed_view, for example
+  $data['main_content'] = '';
+  
+  $data['from_email'] = variable_get('newsletter_from_email', variable_get('site_mail'));
+  $data['from_name'] =  variable_get('newsletter_from_name', variable_get('site_name'));
+  $data['to_email'] = variable_get('site_name');
+
+  $logo = path_to_theme() . '/images/logo.png';
+  $data['logo'] = l(theme('image', array('path' => url($logo, array('absolute'=>TRUE, 'prefix' => '', 'language' => '')))), url('<front>', array('absolute' => TRUE)), array('html' => TRUE)); 
+  
+  return $data;
+}
+
+/**
+ *  Callback function for mailchimp prepare
+ */
+function custom_mailchimp_prepare() {
+  $data = custom_mailchimp_get_newsletter_data(TRUE);
+  return '<div style="border: 1px solid gray; padding: 30px; margin-bottom: 50px;>' . theme('custom_mailchimp_newsletter', $data) . '<div class="mailchimp_button">' . drupal_render(drupal_get_form('custom_mailchimp_send_letter')) . '</div></div>';	
+}
+
+/**
+ * Callback for admin/config/system/mail_texts
+ */
+function custom_mailchimp_texts() {
+  $form = array();
+  
+  $defaults = array(
+    'value' => '',
+    'format' => filter_default_format(),
+  );
+  $bfield = variable_get('newsletter_body', $defaults);
+  $lists = mailchimp_get_lists(); 
+  if (!empty($lists)) {
+    $lists_text = '';
+    foreach ($lists as $id => $list) {
+      $lists_text .= '<br />' . $list['name'] . ' : ' . $id;
+    }  
+  }
+  
+  $form['newsletter_mailchimp_list_id'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Mailchimp list id'),
+    '#description' => t('List id from mailchimp.com account: !vals', array('!vals' => $lists_text)),
+    '#required' => TRUE,
+    '#default_value' => variable_get('newsletter_mailchimp_list_id', ''),  
+  ); 
+  
+  $form['newsletter_from_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('From name'),
+    '#default_value' => variable_get('newsletter_from_name', ''),  
+  );
+
+  $form['newsletter_from_email'] = array(
+    '#type' => 'textfield',
+    '#title' => t('From email'),
+    '#default_value' => variable_get('newsletter_from_email', variable_get('site_mail')),
+  );
+  
+  $form['newsletter_body'] = array(
+    '#title' => t('Body text'),
+    '#type' => 'text_format',
+    '#default_value' => $bfield['value'],
+    '#format' => $bfield['format'], 
+  );  
+  
+
+  $ffield = variable_get('newsletter_footer', $defaults);
+  $form['newsletter_footer'] = array(
+    '#title' => t('Footer text'),
+    '#type' => 'text_format',
+    '#default_value' => $ffield['value'],
+    '#format' => $ffield['format'], 
+  );
+  return system_settings_form($form);
+}
+
+/**
+ * Send email form
+ */
+function custom_mailchimp_send_letter() {
+  $form = array();
+  $form['custom_mailchimp_send'] = array(
+    '#type'  => 'button',
+    '#name'  => 'send_mailchimp',
+    '#value' => t('Prepare to mailchimp'),
+    '#ajax'  => array(
+      'callback' => 'custom_mailchimp_create_campaign',
+      'wrapper'  => 'custom-mailchimp-send-letter',
+      'method'   => 'replace',
+      'effect'   => 'fade',
+    ),
+  );	
+  
+  return $form;
+}
+
+/**
+ * Create mailchimp compaighn for rooms overview
+ */
+function custom_mailchimp_create_campaign() {
+  /*if (!isset($_GET['cron_key']) || ($_GET['cron_key'] != RAUMB_MAIN_CRON_HASH)) {
+    watchdog('raumb_mailchimp', 'Invalid cron key !cron_key has been used to create campaign.', array('!cron_key' => $_GET['cron_key']));
+    drupal_exit();
+  } */
+
+  $data = custom_mailchimp_get_newsletter_data();
+  $options = array(
+    'list_id' =>  variable_get('newsletter_mailchimp_list_id', ''),
+    'from_email' => $data['from_email'],
+    'from_name' => $data['from_name'],
+    'to_email' => $data['to_email'],
+  );
+  $type = 'regular';
+
+  $template = array(
+    'html' => array('value' => theme('custom_mailchimp_newsletter', $data), 'format' => 'full_html'),
+  );
+
+
+  $options['subject'] = $data['from_name'] . ' - ' . date('d.m.Y');
+  $options['title'] = $data['from_name'] . ' - ' . date('d.m.Y');
+  $options['tracking'] = array(
+    'opens' => TRUE,
+    'html_clicks' => TRUE,
+    'text_clicks' => TRUE
+  );
+  $options['authenticate'] = false;
+  mailchimp_campaign_save_campaign($template, $options, $campaign_id = NULL);
+  watchdog('raumb_mailchimp', 'Created campaign');
+  cache_clear_all('mailchimp_campaign_campaigns', 'cache');
+
+  //$options['analytics'] = array('google'=>'atphga');
+  /* $q = mailchimp_get_api_object();
+  $cid = $q->campaignCreate($type, $options, $content);
+  //$result = $q->campaignSendNow($cid);
+  */
+  return l(t('Campaign was created'), 'admin/config/services/mailchimp/campaigns');
+}
+
+/**
+ * Add user to newsletter list
+ */
+function custom_mailchimp_register_user_newsletter($user_email, $user_name) {
+  global $user;
+  $list_id = variable_get('newsletter_mailchimp_list_id', '');
+  $subscribed = mailchimp_is_subscribed($list_id, $user_email);
+  if (!$subscribed) {
+    $lists = mailchimp_lists_get_available_lists($user, array('allow_anonymous' => TRUE));
+    foreach ($lists as $list_item) {
+      if ($list_item->mc_list_id == $list_id) {
+        $list = $list_item;   
+      }    
+    }
+
+    $vars['EMAIL'] = $user_email;
+    $vars['FNAME'] = $user_name;
+    $merge_vars = $vars;
+    mailchimp_subscribe_user($list, $user_email, $merge_vars); 
+  }
+}
